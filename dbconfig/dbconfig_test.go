@@ -5,7 +5,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
-	"vngom/gormex/dbconfig"
+
+	"github.com/nttlong/regorm/dbconfig"
 
 	"github.com/stretchr/testify/assert"
 )

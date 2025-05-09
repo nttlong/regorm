@@ -63,6 +63,7 @@ func (c *MySqlDbConfig) GetStorage(dbName string) (dbconfig.IStorage, error) {
 	panic("implement me")
 }
 func (c *MySqlDbConfig) TranslateError(err error, entity interface{}, action string) dberrors.DataActionError {
+	panic("implement me")
 }
 func New() *MySqlDbConfig {
 	return &MySqlDbConfig{}
