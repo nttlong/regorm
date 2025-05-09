@@ -446,8 +446,14 @@ func (c *DbConfigBase) GetAllModelsInEntity(entity interface{}) []interface{} {
 }
 
 // =
+var dbConfig DbConfigBase
+var once sync.Once
+
 func NewDbConfigBase() IDbConfigBase {
-	return &DbConfigBase{}
+	once.Do(func() {
+		dbConfig = DbConfigBase{}
+	})
+	return &dbConfig
 }
 
 // ===================================================
