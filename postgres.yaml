@@ -5,5 +5,5 @@ db:
   password: "123456"
   options:
     sslmode: "disable"
-    timezone: "Asia/Shanghai"
+    timezone: "Asia/Shanghai"  # 时区设置
     collation: ""
