@@ -23,6 +23,7 @@ type PostgresStorage struct {
 	db       *gorm.DB
 	dbConfig dbconfig.IDbConfig
 	parser   expr.IExpr
+	dbName   string
 }
 
 func (c *PostgresDbConfig) GetConectionString(dbname string) string {
@@ -65,20 +66,21 @@ func (c *PostgresDbConfig) PingDb() error {
 }
 
 var (
-	cacheAutoMigrate = make(map[reflect.Type]bool)
+	cacheAutoMigrate = make(map[string]bool)
 	lockAutoMigrate  = sync.RWMutex{}
 )
 
 func (s *PostgresStorage) AutoMigrate(entity interface{}) error {
+	key := s.GetDbName() + ":" + reflect.TypeOf(entity).Name()
 	lockAutoMigrate.RLock()
-	isAutoMigrated := cacheAutoMigrate[reflect.TypeOf(entity)]
+	isAutoMigrated := cacheAutoMigrate[key]
 	lockAutoMigrate.RUnlock()
 	if isAutoMigrated {
 		return nil
 	}
 	lockAutoMigrate.Lock()
 	defer lockAutoMigrate.Unlock()
-	if cacheAutoMigrate[reflect.TypeOf(entity)] {
+	if cacheAutoMigrate[key] {
 		return nil
 	}
 	entities := s.dbConfig.GetAllModelsInEntity(entity)
@@ -87,22 +89,32 @@ func (s *PostgresStorage) AutoMigrate(entity interface{}) error {
 	if err != nil {
 		return err
 	}
-	cacheAutoMigrate[reflect.TypeOf(entity)] = true
+	cacheAutoMigrate[key] = true
 	return nil
 }
 func (s *PostgresStorage) Save(entity interface{}) error {
-	s.AutoMigrate(entity)
+	err := s.AutoMigrate(entity)
+	if err != nil {
+		return err
+	}
 	return s.db.Save(entity).Error
 }
 func (s *PostgresStorage) Create(entity interface{}) error {
-	s.AutoMigrate(entity)
+	err := s.AutoMigrate(entity)
+	if err != nil {
+		return err
+	}
 	return s.db.Create(entity).Error
 }
 func (s *PostgresStorage) CreateInBatches(entities interface{}, batchSize int) error {
 	typ := reflect.TypeOf(entities)
 	if typ.Kind() == reflect.Slice {
 		typ = typ.Elem()
-		s.AutoMigrate(reflect.New(typ).Interface())
+		err := s.AutoMigrate(reflect.New(typ).Interface())
+		if err != nil {
+			return err
+		}
+
 	}
 
 	return s.db.CreateInBatches(entities, batchSize).Error
@@ -117,7 +129,10 @@ func (s *PostgresStorage) Find(dest interface{}, conds ...interface{}) error {
 	}
 	if typ.Kind() == reflect.Slice {
 		typ = typ.Elem()
-		s.AutoMigrate(reflect.New(typ).Interface())
+		erMisMigrate := s.AutoMigrate(reflect.New(typ).Interface())
+		if erMisMigrate != nil {
+			return erMisMigrate
+		}
 	}
 
 	if conds != nil || len(conds) > 0 {
@@ -148,7 +163,11 @@ func (s *PostgresStorage) Find(dest interface{}, conds ...interface{}) error {
 }
 
 func (s *PostgresStorage) Update(entity interface{}, conds ...interface{}) error {
-	s.AutoMigrate(entity)
+	erMigrate := s.AutoMigrate(entity)
+	if erMigrate != nil {
+		return erMigrate
+	}
+
 	if conds != nil || len(conds) > 0 {
 		if reflect.TypeOf(conds[0]) == reflect.TypeOf("string") {
 			strCon := conds[0].(string)
@@ -165,7 +184,10 @@ func (s *PostgresStorage) Update(entity interface{}, conds ...interface{}) error
 
 func (s *PostgresStorage) First(dest interface{}, conds ...interface{}) error {
 
-	s.AutoMigrate(dest)
+	erMigrate := s.AutoMigrate(dest)
+	if erMigrate != nil {
+		return erMigrate
+	}
 	//parse condition
 	if conds != nil || len(conds) > 0 {
 		if reflect.TypeOf(conds[0]) == reflect.TypeOf("string") {
@@ -183,7 +205,10 @@ func (s *PostgresStorage) First(dest interface{}, conds ...interface{}) error {
 	return s.db.First(dest, conds).Error
 }
 func (s *PostgresStorage) Delete(value interface{}, conds ...interface{}) error {
-	s.AutoMigrate(value)
+	erMigrate := s.AutoMigrate(value)
+	if erMigrate != nil {
+		return erMigrate
+	}
 	if conds != nil || len(conds) > 0 {
 		if reflect.TypeOf(conds[0]) == reflect.TypeOf("string") {
 			strCon := conds[0].(string)
@@ -199,7 +224,10 @@ func (s *PostgresStorage) Delete(value interface{}, conds ...interface{}) error 
 	return s.db.Delete(value, conds).Error
 }
 func (s *PostgresStorage) Count(entity interface{}, conds ...interface{}) (int64, error) {
-	s.AutoMigrate(entity)
+	erMigrate := s.AutoMigrate(entity)
+	if erMigrate != nil {
+		return 0, erMigrate
+	}
 	var ret int64
 	if conds != nil || len(conds) > 0 {
 		if reflect.TypeOf(conds[0]) == reflect.TypeOf("string") {
@@ -217,7 +245,7 @@ func (s *PostgresStorage) Count(entity interface{}, conds ...interface{}) (int64
 		}
 	}
 
-	errL := s.db.Model(entity).Count(&ret).Error
+	errL := s.db.Model(&entity).Count(&ret).Error
 	if errL != nil {
 		return 0, errL
 	}
@@ -238,7 +266,39 @@ func (c *PostgresStorage) GetParser() expr.IExpr {
 func (c *PostgresStorage) SetParser(parser expr.IExpr) {
 	c.parser = parser
 }
+func (c *PostgresStorage) GetDbName() string {
+	return c.dbName
+}
+
+var (
+	cacheGetStorage = make(map[string]dbconfig.IStorage)
+	lockGetStorage  = sync.RWMutex{}
+)
+
 func (c *PostgresDbConfig) GetStorage(dbName string) (dbconfig.IStorage, error) {
+	//check if storage is cached
+	lockGetStorage.RLock()
+	storage := cacheGetStorage[dbName]
+	lockGetStorage.RUnlock()
+	if storage != nil {
+		return storage, nil
+	}
+	lockGetStorage.Lock()
+	defer lockGetStorage.Unlock()
+	if cacheGetStorage[dbName] != nil {
+		return cacheGetStorage[dbName], nil
+	}
+	//create new storage
+	storage, err := c.createStorage(dbName)
+	if err != nil {
+		return nil, err
+	}
+	cacheGetStorage[dbName] = storage
+	return storage, nil
+}
+
+func (c *PostgresDbConfig) createStorage(dbName string) (dbconfig.IStorage, error) {
+
 	err := c.PingDb()
 	if err != nil {
 		return nil, err
@@ -255,6 +315,7 @@ func (c *PostgresDbConfig) GetStorage(dbName string) (dbconfig.IStorage, error) 
 		db:       d,
 		dbConfig: c,
 		parser:   exprpostgres.New(),
+		dbName:   dbName,
 	}, nil
 
 }

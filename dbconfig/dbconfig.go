@@ -58,6 +58,7 @@ type IStorage interface {
 
 	Exec(sql string, values ...interface{}) error
 	Count(entity interface{}, conds ...interface{}) (int64, error)
+	GetDbName() string
 }
 type IDbConfig interface {
 	IDbConfigBase

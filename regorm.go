@@ -42,3 +42,5 @@ func New(driverName string) dbconfig.IDbConfig {
 	return ret
 
 }
+
+type IDbConfig dbconfig.IDbConfig
